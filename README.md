@@ -1,17 +1,17 @@
 # Borderless Apps Site
 
-Static site for [borderlessapps.com](https://borderlessapps.com) — hosts marketing, privacy policy, and support pages for all Borderless Apps.
+Static site for [borderlessapps.com](https://borderlessapps.com) — the shared documentation home for Borderless Apps products. It hosts marketing, privacy policy, and support pages for each app.
 
 ## Structure
 
 ```
-/                          → Main landing page
-/WireWise/Marketing        → WireWise marketing page
-/WireWise/PrivacyPolicy    → WireWise privacy policy
-/WireWise/Support          → WireWise support page
-/RepairScan/Marketing      → RepairScan marketing page
-/RepairScan/PrivacyPolicy  → RepairScan privacy policy
-/RepairScan/Support        → RepairScan support page
+/                           -> Main landing page
+/WireWise/Marketing         -> WireWise marketing page
+/WireWise/PrivacyPolicy     -> WireWise privacy policy
+/WireWise/Support           -> WireWise support page
+/RepairScore/Marketing      -> RepairScore marketing page
+/RepairScore/PrivacyPolicy  -> RepairScore privacy policy
+/RepairScore/Support        -> RepairScore support page
 ```
 
 ## Adding a New App
