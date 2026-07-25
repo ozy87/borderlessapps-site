@@ -12,6 +12,9 @@ Static site for [borderlessapps.com](https://borderlessapps.com) — the shared 
 /RepairScore/Marketing      -> RepairScore marketing page
 /RepairScore/PrivacyPolicy  -> RepairScore privacy policy
 /RepairScore/Support        -> RepairScore support page
+/CitizenReady/Marketing     -> CitizenReady marketing page
+/CitizenReady/PrivacyPolicy -> CitizenReady privacy policy
+/CitizenReady/Support       -> CitizenReady support page
 ```
 
 ## Adding a New App
