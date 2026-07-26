@@ -15,6 +15,9 @@ Static site for [borderlessapps.com](https://borderlessapps.com) — the shared 
 /CitizenReady/Marketing     -> CitizenReady marketing page
 /CitizenReady/PrivacyPolicy -> CitizenReady privacy policy
 /CitizenReady/Support       -> CitizenReady support page
+/PetChip/Marketing          -> PetChip marketing page
+/PetChip/PrivacyPolicy      -> PetChip privacy policy
+/PetChip/Support            -> PetChip support page
 ```
 
 ## Adding a New App
