@@ -18,6 +18,9 @@ Static site for [borderlessapps.com](https://borderlessapps.com) — the shared 
 /PetChip/Marketing          -> PetChip marketing page
 /PetChip/PrivacyPolicy      -> PetChip privacy policy
 /PetChip/Support            -> PetChip support page
+/LivretCitoyen/Marketing    -> Livret du Citoyen marketing page (FR)
+/LivretCitoyen/PrivacyPolicy -> Livret du Citoyen privacy policy (FR)
+/LivretCitoyen/Support      -> Livret du Citoyen support page (FR)
 ```
 
 ## Adding a New App
