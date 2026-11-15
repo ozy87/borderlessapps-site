@@ -1,0 +1,14 @@
+extends: existence
+message: "Unsupported claim '%s'. Growth pages must not use superlatives, rankings, guarantees or 'official' status."
+level: error
+ignorecase: true
+# Vale wraps each token in word boundaries, so "unofficial" does not match "official".
+tokens:
+  - best
+  - best-?selling
+  - official(?:ly)?
+  - guarantee[ds]?
+  - number one
+  - no\.? ?1
+  # "#1" starts with a symbol, so word-boundary matching cannot be used.
+  - '(?:^|\s)#1(?:\b|$)'

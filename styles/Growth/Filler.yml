@@ -1,0 +1,11 @@
+extends: existence
+message: "Filler word '%s'. Say what the app actually does in plain words."
+level: error
+ignorecase: true
+tokens:
+  - seamless(?:ly)?
+  - robust(?:ness)?
+  - leverag(?:e|es|ed|ing)
+  - delv(?:e|es|ed|ing)
+  - utili[sz](?:e|es|ed|ing)
+  - synerg(?:y|ies|istic)

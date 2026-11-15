@@ -1,0 +1,332 @@
+# =============================================================================
+# Growth autopilot: website pull request checks
+# -----------------------------------------------------------------------------
+# Copy into the site repo (ozy87/borderlessapps-site) as:
+#   .github/workflows/site-checks.yml
+# and copy the files from founder-os/templates/site/ as described in that
+# folder's README.md (.vale.ini, styles/, .htmlvalidate.json, lighthouserc.json,
+# CODEOWNERS).
+#
+# Runs on every pull request, including growth PRs written by Claude. The repo
+# is public, so this workflow holds NO secrets and needs none: it uses the
+# read-only default token only to check out the code. It uses `pull_request`,
+# never `pull_request_target`, so pull requests from forks get no privileges.
+#
+# Page checks look only at the page files this PR adds or changes (.html and
+# .htm, matched case-insensitively). A PR that changes none passes them.
+#   0. Tripwire:     fail if the PR touches .github/, CODEOWNERS or any gate file.
+#   1. File names:   page names must be plain (letters, digits, . _ - / and space),
+#                    no path segment may start with "-", the extension must be
+#                    lowercase .html or .htm, and no .xhtml/.shtml/.php may be added.
+#   2. New pages:    fail if the PR adds more than 3 new pages.
+#   3. Directives:   fail if a changed page contains inline switches that turn a
+#                    check off (`vale off`, `vale Rule = NO`, `html-validate-disable`).
+#   4. Links:        lychee link check.
+#   5. Markup:       html-validate with .htmlvalidate.json.
+#   6. Wording:      Vale with the Growth style, on the visible text AND on the
+#                    hidden text (title, meta tags, alt text, JSON-LD).
+#   7. Quality:      Lighthouse CI on the changed pages, served from a local
+#                    static server; SEO and accessibility must score >= 0.9.
+#
+# A failing check does not hide the others: each runs even if an earlier one failed.
+#
+# Gate files (.vale.ini, styles/, .htmlvalidate.*, lighthouserc.*, lychee config,
+# .lycheeignore) are restored from the repository's DEFAULT branch before the
+# checks run; copies that exist only in the PR are deleted. So a PR cannot loosen
+# its own gates. A PR cannot rewrite this workflow's effect either, because the
+# tripwire fails it and CODEOWNERS plus a branch ruleset require the owner's
+# review (see README.md). GitHub runs the PR's copy of the workflow file, so
+# the ruleset is what actually protects it.
+#
+# Own-site links: absolute links to https://borderlessapps.com/... are remapped
+# to this checkout (see the --remap argument of the link step), so a link to a
+# page added in the same PR passes even though it is not deployed yet, and a link
+# to a page that does not exist in the repo fails. Mail links are not checked
+# (lychee skips them unless asked). Private and local addresses are excluded.
+# Pretty URLs work: /CitizenReady/guide matches CitizenReady/guide.html.
+# To exclude any other URL, add a regex per line to a .lycheeignore file in the
+# repo root (it is a gate file, so it needs the owner's review).
+# =============================================================================
+
+name: Site Checks
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Site checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MAX_NEW_PAGES: '3'
+      VALE_VERSION: '3.27.0'
+      VALE_SHA256: c80d62f6bce87b81843ac5b512a26e63213927b957adba0a64fc594570da2000 # vale_3.27.0_Linux_64-bit.tar.gz
+      HTML_VALIDATE_VERSION: '11.21.1'
+      LHCI_VERSION: '0.16.1'
+    steps:
+      - name: Check out the pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history and all branches so diffs and the default branch work
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      - name: Tripwire for workflow and gate file changes
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git -c core.quotepath=off diff -z --name-only --no-renames "origin/$BASE_REF...HEAD" > "$RUNNER_TEMP/all.z"
+          # Anything under .github/, any CODEOWNERS, and every gate file at any depth.
+          if grep -zE '^\.github/|(^|/)CODEOWNERS$|(^|/)\.?vale\.ini$|(^|/)_vale\.ini$|^styles/|(^|/)\.htmlvalidate(\.|$)|(^|/)\.?lighthouserc|(^|/)\.?lychee\.toml$|(^|/)\.lycheeignore$' "$RUNNER_TEMP/all.z" > "$RUNNER_TEMP/protected.z"; then
+            echo "::error::This PR changes the workflow, CODEOWNERS or a gate file. The owner must review and merge it by hand."
+            tr '\0' '\n' < "$RUNNER_TEMP/protected.z" | sed 's/^/protected: /'
+            exit 1
+          fi
+          echo "No protected files changed."
+
+      - name: Restore the gate files from the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [ -n "$DEFAULT_BRANCH" ] || { echo "::error::Default branch unknown."; exit 1; }
+          # Delete every gate file the PR has (anywhere), then bring back the default branch's versions.
+          find . -path ./.git -prune -o \( -name '.htmlvalidate.*' -o -name '.lighthouserc*' -o -name 'lighthouserc*' \
+            -o -name '.vale.ini' -o -name '_vale.ini' -o -name 'lychee.toml' -o -name '.lychee.toml' -o -name '.lycheeignore' \) -print0 \
+            | xargs -0 -r rm -f --
+          rm -rf -- styles
+          git ls-tree -r -z --name-only "origin/$DEFAULT_BRANCH" > "$RUNNER_TEMP/default-files.z"
+          grep -zE '^styles/|^\.vale\.ini$|^_vale\.ini$|^\.htmlvalidate\.|^\.?lighthouserc|^\.?lychee\.toml$|^\.lycheeignore$' "$RUNNER_TEMP/default-files.z" > "$RUNNER_TEMP/restore.z" || true
+          if [ -s "$RUNNER_TEMP/restore.z" ]; then
+            xargs -0 git checkout "origin/$DEFAULT_BRANCH" -- < "$RUNNER_TEMP/restore.z"
+            tr '\0' '\n' < "$RUNNER_TEMP/restore.z" | sed "s/^/restored from $DEFAULT_BRANCH: /"
+          fi
+          for required in .vale.ini .htmlvalidate.json lighthouserc.json; do
+            [ -f "$required" ] || { echo "::error::$required is missing on the default branch. Merge the gate files first."; exit 1; }
+          done
+          # An empty explicit lychee config, so no lychee.toml found by accident is read.
+          : > "$RUNNER_TEMP/lychee-empty.toml"
+
+      - name: Find the changed pages
+        id: changed
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          # NUL-separated lists keep file names with spaces intact. Renames count as a delete plus an add.
+          # Pages are .html and .htm in any letter case, so a name like INDEX.HTML cannot skip the checks.
+          pages=(':(icase)*.html' ':(icase)*.htm')
+          d() { git -c core.quotepath=off diff -z --name-only --no-renames "$@"; }
+          d --diff-filter=AM "origin/$BASE_REF...HEAD" -- "${pages[@]}" > "$RUNNER_TEMP/changed.z"
+          d --diff-filter=A "origin/$BASE_REF...HEAD" -- "${pages[@]}" > "$RUNNER_TEMP/added.z"
+          d --diff-filter=A "origin/$BASE_REF...HEAD" -- ':(icase)*.xhtml' ':(icase)*.shtml' ':(icase)*.php' > "$RUNNER_TEMP/forbidden.z"
+          bad=0
+          if [ -s "$RUNNER_TEMP/forbidden.z" ]; then
+            echo "::error::This PR adds .xhtml, .shtml or .php files, which the checks do not cover. Use plain .html."
+            tr '\0' '\n' < "$RUNNER_TEMP/forbidden.z" | sed 's/^/not allowed: /'
+            bad=1
+          fi
+          # Plain names only: no leading "-" in any path segment (it would read as an option), no glob
+          # characters, no line breaks, and a lowercase .html or .htm extension.
+          : > "$RUNNER_TEMP/badnames.z"
+          # Under -z, ^ and $ also match at line breaks inside a name, so the whole-name anchors \A and \z (PCRE) are used,
+          # and any line break or carriage return is rejected outright (the newline-separated list feeds lychee).
+          if [ "$(tr -cd '\n\r' < "$RUNNER_TEMP/changed.z" | wc -c)" -ne 0 ]; then
+            echo "::error::A changed page has a line break in its name. Rename it."
+            exit 1
+          fi
+          # Any byte outside printable ASCII (0x20 to 0x7E) is rejected, byte by byte, so invalid UTF-8 cannot slip past the greps.
+          if [ "$(LC_ALL=C tr -d '\0\040-\176' < "$RUNNER_TEMP/changed.z" | wc -c)" -ne 0 ]; then
+            echo "::error::A changed page has a character outside plain ASCII in its name. Rename it."
+            exit 1
+          fi
+          LC_ALL=C grep -zvP '\A[A-Za-z0-9._/ -]+\z' "$RUNNER_TEMP/changed.z" >> "$RUNNER_TEMP/badnames.z" || true
+          LC_ALL=C grep -zP '(\A|/)-' "$RUNNER_TEMP/changed.z" >> "$RUNNER_TEMP/badnames.z" || true
+          LC_ALL=C grep -zvP '\.(html|htm)\z' "$RUNNER_TEMP/changed.z" >> "$RUNNER_TEMP/badnames.z" || true
+          if [ -s "$RUNNER_TEMP/badnames.z" ]; then
+            echo "::error::Page names may only use letters, digits, dot, underscore, hyphen, slash and space; no path part may start with a hyphen; the extension must be lowercase .html or .htm."
+            tr '\0' '\n' < "$RUNNER_TEMP/badnames.z" | sed 's/^/bad name: /'
+            bad=1
+          fi
+          if [ "$bad" -ne 0 ]; then exit 1; fi
+          # Names are now safe. Prefix "./" so no tool can read a name as an option or a URL.
+          sed -z 's#^#./#' "$RUNNER_TEMP/changed.z" > "$RUNNER_TEMP/changed-dot.z"
+          tr '\0' '\n' < "$RUNNER_TEMP/changed-dot.z" > "$RUNNER_TEMP/changed.txt"
+          changed="$(tr -cd '\0' < "$RUNNER_TEMP/changed.z" | wc -c)"
+          added="$(tr -cd '\0' < "$RUNNER_TEMP/added.z" | wc -c)"
+          if [ "$changed" -gt 0 ]; then echo "has_html=true" >> "$GITHUB_OUTPUT"; else echo "has_html=false" >> "$GITHUB_OUTPUT"; fi
+          echo "Changed pages: $changed (new: $added)"
+          cat "$RUNNER_TEMP/changed.txt"
+
+      - name: At most 3 new pages
+        run: |
+          set -euo pipefail
+          added="$(tr -cd '\0' < "$RUNNER_TEMP/added.z" | wc -c)"
+          if [ "$added" -gt "$MAX_NEW_PAGES" ]; then
+            echo "::error::This PR adds $added new pages; the limit is $MAX_NEW_PAGES. Split it into smaller PRs."
+            tr '\0' '\n' < "$RUNNER_TEMP/added.z" | sed 's/^/new page: /'
+            exit 1
+          fi
+          echo "New pages: $added (limit $MAX_NEW_PAGES)."
+
+      - name: No inline switches that turn checks off
+        if: ${{ !cancelled() && steps.changed.outputs.has_html == 'true' }}
+        run: |
+          set -euo pipefail
+          # xargs may run grep in several batches and then exits 123 on mixed results, so judge by the output, not the exit code.
+          xargs -0 -a "$RUNNER_TEMP/changed-dot.z" grep -liE -e 'vale[[:space:]]+(off|on|[A-Za-z0-9_.-]+[[:space:]]*=)' -e 'html-validate-(disable|enable)' -- > "$RUNNER_TEMP/directives.txt" || true
+          if [ -s "$RUNNER_TEMP/directives.txt" ]; then
+            echo "::error::These pages contain inline directives that switch off Vale or html-validate checks."
+            sed 's/^/directive in: /' "$RUNNER_TEMP/directives.txt"
+            exit 1
+          fi
+          echo "No inline directives."
+
+      - name: Check links
+        if: ${{ !cancelled() && steps.changed.outputs.has_html == 'true' }}
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          jobSummary: true
+          failIfEmpty: false
+          # --files-from reads one path per line, so names with spaces are safe.
+          # Mail links are skipped by default (lychee needs --include-mail to check them).
+          # --config points at an empty file so only this command line (plus .lycheeignore) applies.
+          args: >-
+            --no-progress
+            --config "${{ runner.temp }}/lychee-empty.toml"
+            --files-from "${{ runner.temp }}/changed.txt"
+            --root-dir "${{ github.workspace }}"
+            --remap "^https://(www[.])?borderlessapps[.]com/ file://${{ github.workspace }}/"
+            --fallback-extensions html
+            --index-files index.html,.
+            --exclude-all-private
+            --max-retries 2
+            --timeout 20
+
+      - name: Install the checkers
+        if: ${{ !cancelled() && steps.changed.outputs.has_html == 'true' }}
+        run: |
+          set -euo pipefail
+          # Installed outside the workspace so nothing in the PR can shadow these tools.
+          mkdir -p "$RUNNER_TEMP/tools"
+          npm install --prefix "$RUNNER_TEMP/tools" --no-save --no-audit --no-fund --ignore-scripts \
+            "html-validate@$HTML_VALIDATE_VERSION" "@lhci/cli@$LHCI_VERSION"
+          curl -fsSL -o "$RUNNER_TEMP/vale.tar.gz" "https://github.com/vale-cli/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz"
+          echo "${VALE_SHA256}  $RUNNER_TEMP/vale.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/vale"
+          tar -xzf "$RUNNER_TEMP/vale.tar.gz" -C "$RUNNER_TEMP/vale" vale
+          echo "$RUNNER_TEMP/tools/node_modules/.bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/vale" >> "$GITHUB_PATH"
+
+      - name: Validate HTML
+        if: ${{ !cancelled() && steps.changed.outputs.has_html == 'true' }}
+        run: |
+          set -euo pipefail
+          xargs -0 -a "$RUNNER_TEMP/changed-dot.z" html-validate --config .htmlvalidate.json --
+
+      - name: Check wording with Vale
+        if: ${{ !cancelled() && steps.changed.outputs.has_html == 'true' }}
+        run: |
+          set -euo pipefail
+          # Vale reads .html natively: it lints the visible text and skips code, scripts and attributes.
+          status=0
+          xargs -0 -a "$RUNNER_TEMP/changed-dot.z" vale --config .vale.ini --output=line -- || status=1
+          # Hidden text (title, meta tags, alt text, JSON-LD) is pulled out into small pages and linted with the same style.
+          hidden="$RUNNER_TEMP/hidden-text"
+          rm -rf "$hidden"; mkdir -p "$hidden"
+          python3 -I - "$hidden" "$RUNNER_TEMP/changed-dot.z" <<'PY'
+          import html, json, sys
+          from html.parser import HTMLParser
+
+          out_dir, list_file = sys.argv[1], sys.argv[2]
+          names = [n for n in open(list_file, 'rb').read().decode('utf-8', 'replace').split('\0') if n]
+
+          def strings(value):
+              if isinstance(value, str):
+                  yield value
+              elif isinstance(value, dict):
+                  for v in value.values():
+                      yield from strings(v)
+              elif isinstance(value, list):
+                  for v in value:
+                      yield from strings(v)
+
+          class Hidden(HTMLParser):
+              def __init__(self):
+                  super().__init__(convert_charrefs=True)
+                  self.texts, self.mode, self.buf = [], None, []
+              def handle_starttag(self, tag, attrs):
+                  a = dict(attrs)
+                  if tag == 'title':
+                      self.mode, self.buf = 'title', []
+                  if tag == 'meta' and a.get('content'):
+                      self.texts.append(a['content'])
+                  for key in ('alt', 'title', 'aria-label'):
+                      if a.get(key):
+                          self.texts.append(a[key])
+                  if tag == 'script' and (a.get('type') or '').lower() == 'application/ld+json':
+                      self.mode, self.buf = 'jsonld', []
+              def handle_data(self, data):
+                  if self.mode in ('jsonld', 'title'):
+                      self.buf.append(data)
+              def handle_endtag(self, tag):
+                  if tag == 'title' and self.mode == 'title':
+                      self.texts.append(''.join(self.buf))
+                      self.mode = None
+                  if tag == 'script' and self.mode == 'jsonld':
+                      raw = ''.join(self.buf)
+                      try:
+                          self.texts.extend(strings(json.loads(raw)))
+                      except ValueError:
+                          self.texts.append(raw)
+                      self.mode = None
+
+          for i, name in enumerate(names):
+              with open(name, encoding='utf-8', errors='replace') as fh:
+                  parser = Hidden()
+                  parser.feed(fh.read())
+              body = '\n'.join('<p>%s</p>' % html.escape(t) for t in parser.texts)
+              with open('%s/%d.html' % (out_dir, i), 'w', encoding='utf-8') as fh:
+                  fh.write('<!DOCTYPE html>\n<html lang="en"><head><title>hidden text</title></head><body>\n%s\n</body></html>\n' % body)
+              print('%d.html = hidden text of %s' % (i, name))
+          PY
+          vale --config .vale.ini --output=line -- "$hidden" || status=1
+          exit "$status"
+
+      - name: Lighthouse CI on the changed pages
+        if: ${{ !cancelled() && steps.changed.outputs.has_html == 'true' }}
+        run: |
+          set -euo pipefail
+          # This is the one step that runs JavaScript from the PR (in headless Chrome), on a runner with no secrets.
+          # Serve a clean export of the commit (no .git, no links that point outside it), not the live checkout.
+          site="$RUNNER_TEMP/site"
+          rm -rf "$site"; mkdir -p "$site"
+          git archive HEAD | tar -x -C "$site"
+          find "$site" -type l -delete
+          python3 -m http.server 8080 --bind 127.0.0.1 --directory "$site" > "$RUNNER_TEMP/server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2> /dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl -fs -o /dev/null http://127.0.0.1:8080/; then break; fi
+            sleep 1
+          done
+          # One --collect.url flag per page; file names are URL-encoded one path at a time.
+          args=()
+          while IFS= read -r -d '' f; do
+            url="$(python3 -I -c 'import sys, urllib.parse; print("http://127.0.0.1:8080/" + urllib.parse.quote(sys.argv[1]))' "${f#./}")"
+            args+=("--collect.url=$url")
+          done < "$RUNNER_TEMP/changed-dot.z"
+          lhci collect --config=lighthouserc.json "${args[@]}"
+          lhci assert --config=lighthouserc.json
