@@ -1,0 +1,14 @@
+# Copy to .github/CODEOWNERS in the site repo. Pair it with a branch ruleset that requires
+# code owner review (see README.md), so nobody can change the checks without the owner.
+/.github/ @ozy87
+/CODEOWNERS @ozy87
+/.vale.ini @ozy87
+/_vale.ini @ozy87
+/styles/ @ozy87
+/.htmlvalidate.* @ozy87
+**/.htmlvalidate.* @ozy87
+/lighthouserc* @ozy87
+/.lighthouserc* @ozy87
+/lychee.toml @ozy87
+/.lychee.toml @ozy87
+/.lycheeignore @ozy87
